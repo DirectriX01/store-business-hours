@@ -3,6 +3,7 @@ const StoreHours = require('../models/storeHours');
 const StoreStatus = require('../models/storeStatus');
 const StoreTimezone = require('../models/storeTimezone');
 const StoreReport = require('../models/storeReport');
+const Report = require('../models/report');
 
 const self = (module.exports = {
   async reportGeneration(store) {
@@ -27,7 +28,7 @@ const self = (module.exports = {
 
       // find the last report generated time
       const lastReportTime = moment(storeReport.last_updated).tz(storeTimezone[0].timezone_str);
-      const now = moment('2023-01-28').tz(storeTimezone[0].timezone_str);
+      const now = moment().tz(storeTimezone[0].timezone_str);
 
       const startOfLastWeek = now.clone().startOf('week').subtract(1, 'week');
       const endOfLastWeek = now.clone().startOf('week').subtract(1, 'second');
@@ -39,23 +40,21 @@ const self = (module.exports = {
       const endOfLastHour = now.clone().startOf('hour').subtract(1, 'second');
 
       // last week report comparison
-      if (now.diff(endOfLastWeek, 'days') >= 7) weekFlag = true;
+      if (lastReportTime.diff(endOfLastWeek, 'days') >= 7) weekFlag = true;
 
       // find if last report generated
-      if (now.diff(endOfLastDay, 'days') >= 1) dayFlag = true;
+      if (lastReportTime.diff(endOfLastDay, 'days') >= 1) dayFlag = true;
 
-      if (now.diff(endOfLastHour, 'hours') >= 1) hourFlag = true;
+      if (lastReportTime.diff(endOfLastHour, 'hours') >= 1) hourFlag = true;
 
       if (weekFlag) {
-        queryString.timestamp_utc = { $gte: startOfLastWeek };
+        queryString.timestamp_utc = { $gte: startOfLastWeek.toDate() };
       } else if (dayFlag) {
-        queryString.timestamp_utc = { $gte: startOfLastDay };
+        queryString.timestamp_utc = { $gte: startOfLastDay.toDate() };
       } else if (hourFlag) {
-        queryString.timestamp_utc = { $gte: lastReportTime };
+        queryString.timestamp_utc = { $gte: lastReportTime.toDate() };
       }
-
       const storeStatus = await StoreStatus.find(queryString).sort({ timestamp_utc: 1 }).exec();
-
       const storeHoursArr = new Array(7).fill(null).map(() => []);
 
       for (let i = 0; i < storeHours.length; i += 1) {
@@ -262,6 +261,7 @@ const self = (module.exports = {
         updateQuery.update.$set.last_week_down_time = Math.round(totalWeekDownTime / 3600);
       }
       updateQuery.update.$set.last_updated = new Date();
+      console.log('updateQuery', updateQuery);
       return changeQuery;
     } catch (err) {
       console.log(err);
@@ -273,7 +273,7 @@ const self = (module.exports = {
       const batchUpdates = [];
       for (let i = 0; i < batch.length; i++) {
         const singleUpdate = await self.reportGeneration(batch[i]);
-        if (Object.keys(singleUpdate).length > 0) {
+        if (singleUpdate && Object.keys(singleUpdate).length > 0) {
           batchUpdates.push(singleUpdate);
         }
       }
@@ -286,7 +286,7 @@ const self = (module.exports = {
   async reportGenerationAll(report) {
     const start = new Date();
     try {
-      const storeIds = await StoreReport.find({}, { store_id: 1 });
+      const storeIds = await StoreReport.find({}, { store_id: 1 }).limit(1);
       // batch size of 1000
       const batchSize = 1000;
       const allPromises = [];
@@ -295,15 +295,11 @@ const self = (module.exports = {
         const batch = storeIds.slice(i * batchSize, (i + 1) * batchSize);
         allPromises.push(self.reportGenerationBatch(batch));
       }
-      await Promise.all(allPromises)
-        .then(async () => {
-          const end = new Date();
-          console.log('Time taken: ', end - start, ' ms');
-          report.save();
-        })
-        .then(() => {
-          console.log('Report Generation Complete');
-        });
+      await Promise.all(allPromises).then(async () => {
+        const end = new Date();
+        console.log('Time taken: ', end - start, ' ms');
+        await Report.updateOne({ _id: report._id }, { $set: { status: 'completed' } });
+      });
     } catch (err) {
       console.log(err);
       // throw err;

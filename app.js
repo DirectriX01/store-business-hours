@@ -15,7 +15,8 @@ const api = require('./routes/api');
 
 app.use('/api', api);
 
-mongoose.connect(mongoURI, { useNewUrlParser: true, useUnifiedTopology: true })
+mongoose
+  .connect(mongoURI, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => {
     app.listen(port, () => console.log(`Server started on port ${port}`));
   })
